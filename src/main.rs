@@ -11,7 +11,8 @@ struct Point {
 
 struct Model {
     points: Vec<Point>,
-    selected_id: Option<usize>
+    selected_id: Option<usize>,
+    next_id: usize,
 }
 
 fn main() {
@@ -25,35 +26,48 @@ fn model(_app: &App) -> Model {
             Point { id: 1, position: Point2::new(-100.0, -100.0), color: WHITE.into_format() },
             Point { id: 2 ,position: Point2::new(50.0, -50.0), color: WHITE.into_format() },
         ],
-        selected_id: None, }
+        selected_id: None,
+        next_id: 3 }
 }
 
 fn event(_app: &App, _model: &mut Model, _event: Event) {
-    // Make the points interactive: check if the mouse is close to any point and allow dragging
     let mouse_pos = _app.mouse.position();
 
-    // Press/Select
     if _app.mouse.buttons.left().is_down() {
-        if _app.keys.mods.shift() {
-            let new_point = Point {id: 3, position: mouse_pos, color: WHITE.into_format() };
+        // --- ADD NEW POINT ---
+        // Use a "just_pressed" style check or a boolean to avoid 
+        // spawning 60 points per second while holding shift!
+        if _app.keys.mods.shift() && _model.selected_id.is_none() {
+            let new_point = Point {
+                id: _model.next_id,
+                position: mouse_pos,
+                color: WHITE.into_format(),
+            };
             _model.points.push(new_point);
+            _model.selected_id = Some(_model.next_id); // Grab it immediately
+            _model.next_id += 1; // Increment for the next one
         }
 
-        for point in &mut _model.points {
-            if mouse_pos.distance(point.position) < 10.0 {
-                _model.selected_id = Some(point.id);
+        // --- SELECT POINT ---
+        if _model.selected_id.is_none() {
+            for point in &_model.points {
+                if mouse_pos.distance(point.position) < 15.0 {
+                    _model.selected_id = Some(point.id);
+                    break; 
+                }
             }
         }
     } else {
-        // Release
         _model.selected_id = None;
     }
 
-    // Drag
+    // --- DRAG POINT SAFELY ---
     if let Some(id) = _model.selected_id {
-        _model.points[id].position = mouse_pos;
+        // Find the point that has this ID
+        if let Some(point) = _model.points.iter_mut().find(|p| p.id == id) {
+            point.position = mouse_pos;
+        }
     }
-
 }
 
 fn view(app: &App, _model: &Model, frame: Frame) {
@@ -76,55 +90,53 @@ fn view(app: &App, _model: &Model, frame: Frame) {
                 .color(RED);
         }
     }
-
-    // Run a lerp function on each point with its neighbor
-    for i in 1.._model.points.len() {
-        draw_point(&draw, &lerp(&_model.points[i-1], &_model.points[i], 0.5));
-    }
     
-    draw_bezier_curve(&draw, &_model);
+    let mut curve_points = Vec::new();
+    let resolution = 100; // How many segments make up the curve
+
+    // Extract just the Vec2 positions from your Point structs
+    let control_positions: Vec<Vec2> = _model.points.iter().map(|p| p.position).collect();
+
+    if control_positions.len() > 1 {
+        for i in 0..=resolution {
+            let t = i as f32 / resolution as f32;
+            let p = calculate_bezier_recursive(&control_positions, t);
+            curve_points.push(p);
+        }
+
+        // Draw the "fluid" curve
+        draw.polyline()
+            .weight(3.0)
+            .points(curve_points)
+            .color(STEELBLUE);
+    }
 
     draw.to_frame(app, &frame).unwrap();
 }
 
-fn lerp(p0: &Point, p1: &Point, t: f32) -> Point {
-    let position = (1.0-t)*p0.position + t*p1.position;
-    Point { id: 2, position, color: BLUE.into_format() }
+fn lerp(p0: Vec2, p1: Vec2, t: f32) -> Vec2 {
+    (1.0-t)*p0 + t*p1
 }
 
 fn draw_point(draw: &Draw, point: &Point) {
     draw.ellipse().x_y(point.position.x, point.position.y).radius(5.0).color(point.color);
 }
 
-fn get_bezier_point(p0: Vec2, p1: Vec2, p2: Vec2, t: f32) -> Vec2 {
-    // De Casteljau's Algorithm:
-    // 1. Lerp between P0 and P1
-    let a = p0.lerp(p1, t);
-    // 2. Lerp between P1 and P2
-    let b = p1.lerp(p2, t);
-    // 3. Final Lerp between the results
-    a.lerp(b, t)
-}
-
-fn draw_bezier_curve(draw: &Draw, model: &Model) {
-    let steps = 100;
-    let mut curve_points = Vec::new();
-
-    // 2. Sample the curve at regular intervals of t
-    for i in 0..=steps {
-        let t = i as f32 / steps as f32;
-        let point = get_bezier_point(
-            model.points[0].position, 
-            model.points[2].position, // Note: usually P1 is the 'pull' point
-            model.points[1].position, 
-            t
-        );
-        curve_points.push(point);
+fn calculate_bezier_recursive(points: &[Vec2], t: f32) -> Vec2 {
+    // Base case: If we only have one point, that's our position at time t
+    if points.len() == 1 {
+        return points[0];
     }
 
-    // 3. Draw the resulting polyline
-    draw.polyline()
-        .weight(3.0)
-        .points(curve_points)
-        .color(STEELBLUE);
+    // Create a new list of points by lerping between each neighbor
+    let mut new_points = Vec::with_capacity(points.len() - 1);
+    for i in 0..points.len() - 1 {
+        let p0 = points[i];
+        let p1 = points[i + 1];
+        // Standard Linear Interpolation: (1-t)P0 + tP1
+        new_points.push(lerp(p0, p1, t));
+    }
+
+    // Recurse with the smaller list until we reach a single point
+    calculate_bezier_recursive(&new_points, t)
 }
