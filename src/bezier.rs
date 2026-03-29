@@ -81,6 +81,13 @@ pub fn global_to_local_t(ranges: &[(usize, usize)], global_t: f32) -> (usize, f3
     (seg, local_t)
 }
 
+/// Returns the control points of the Bézier derivative curve (degree n−1).
+/// For a degree-n curve with n+1 control points, returns n control points Q_i = n*(P_{i+1}−P_i).
+pub fn bezier_derivative_points(pts: &[Vec2]) -> Vec<Vec2> {
+    let n = pts.len().saturating_sub(1);
+    (0..n).map(|i| (pts[i + 1] - pts[i]) * n as f32).collect()
+}
+
 /// Evaluates the piecewise spline at a global t ∈ [0, 1].
 pub fn evaluate_piecewise(points: &[Vec2], global_t: f32) -> Vec2 {
     let ranges = piecewise_segment_ranges(points.len());

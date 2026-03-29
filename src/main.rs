@@ -170,6 +170,22 @@ fn view(app: &App, model: &Model, frame: Frame) {
         }
     }
 
+    // Build per-segment position slices for the derivative graphs
+    let graph_segments: Vec<Vec<Vec2>> = match model.mode {
+        VisualizationMode::FullBezier => {
+            if positions.len() >= 2 { vec![positions.clone()] } else { vec![] }
+        }
+        VisualizationMode::PiecewiseSpline => {
+            bezier::piecewise_segment_ranges(positions.len())
+                .into_iter()
+                .map(|(s, e)| positions[s..e].to_vec())
+                .collect()
+        }
+    };
+    ui::draw_velocity_graph(&draw, win, &graph_segments, model.current_t);
+    ui::draw_acceleration_graph(&draw, win, &graph_segments, model.current_t);
+    ui::draw_g1_graph(&draw, win, &graph_segments, model.current_t);
+    ui::draw_g2_graph(&draw, win, &graph_segments, model.current_t);
     ui::draw_slider(&draw, win, model.current_t);
     draw.to_frame(app, &frame).unwrap();
 }
