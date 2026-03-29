@@ -16,6 +16,12 @@ pub fn palette_color(index: usize) -> Rgb<f32> {
     PALETTE[index % PALETTE.len()]
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VisualizationMode {
+    FullBezier,
+    PiecewiseSpline,
+}
+
 pub struct ControlPoint {
     pub id: usize,
     pub position: Vec2,
@@ -28,6 +34,7 @@ pub struct Model {
     pub next_id: usize,
     pub current_t: f32,
     pub dragging_slider: bool,
+    pub mode: VisualizationMode,
 }
 
 impl Model {
@@ -42,6 +49,7 @@ impl Model {
             next_id: 3,
             current_t: 0.0,
             dragging_slider: false,
+            mode: VisualizationMode::FullBezier,
         }
     }
 }

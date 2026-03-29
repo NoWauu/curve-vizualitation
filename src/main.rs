@@ -4,7 +4,7 @@ mod bezier;
 mod model;
 mod ui;
 
-use model::{ControlPoint, Model, palette_color};
+use model::{ControlPoint, Model, VisualizationMode, palette_color};
 
 fn main() {
     nannou::app(model_init).event(event).simple_window(view).run();
@@ -14,7 +14,16 @@ fn model_init(_app: &App) -> Model {
     Model::new()
 }
 
-fn event(app: &App, model: &mut Model, _event: Event) {
+fn event(app: &App, model: &mut Model, event: Event) {
+    // Space key: toggle visualization mode
+    if let Event::WindowEvent { simple: Some(WindowEvent::KeyPressed(Key::Space)), .. } = event {
+        model.mode = match model.mode {
+            VisualizationMode::FullBezier => VisualizationMode::PiecewiseSpline,
+            VisualizationMode::PiecewiseSpline => VisualizationMode::FullBezier,
+        };
+        return;
+    }
+    let _event = event;
     let mouse_pos = app.mouse.position();
     let win = app.window_rect();
 
@@ -64,44 +73,103 @@ fn view(app: &App, model: &Model, frame: Frame) {
     let draw = app.draw();
     draw.background().color(BLACK);
 
-    // Control polygon
-    if model.points.len() > 1 {
-        for w in model.points.windows(2) {
-            draw.line()
-                .start(w[0].position)
-                .end(w[1].position)
-                .color(rgba(0.8f32, 0.2, 0.2, 0.5));
+    let positions: Vec<Vec2> = model.points.iter().map(|p| p.position).collect();
+    let win = app.window_rect();
+
+    match model.mode {
+        VisualizationMode::FullBezier => {
+            // Control polygon
+            if model.points.len() > 1 {
+                for w in model.points.windows(2) {
+                    draw.line()
+                        .start(w[0].position)
+                        .end(w[1].position)
+                        .color(rgba(0.8f32, 0.2, 0.2, 0.5));
+                }
+            }
+
+            // Bezier curve
+            if positions.len() > 1 {
+                let curve = bezier::sample_curve(&positions, 100);
+                draw.polyline().weight(3.0).points(curve).color(STEELBLUE);
+
+                // Playhead
+                let playhead = bezier::de_casteljau(&positions, model.current_t);
+                draw.ellipse().xy(playhead).radius(7.0).color(BLACK);
+                draw.ellipse().xy(playhead).radius(5.0).color(WHITE);
+            }
+
+            // Control points
+            for point in &model.points {
+                draw.ellipse().xy(point.position).radius(5.0).color(point.color);
+            }
+
+            ui::draw_influence_graph(&draw, win, &model.points, model.current_t, 0, 1);
+        }
+
+        VisualizationMode::PiecewiseSpline => {
+            let ranges = bezier::piecewise_segment_ranges(positions.len());
+            let total_segs = ranges.len();
+
+            // Per-segment: dim control polygon + colored curve
+            for (seg_i, &(s, e)) in ranges.iter().enumerate() {
+                let seg_color = palette_color(seg_i);
+                let seg_pts = &model.points[s..e];
+                let seg_pos = &positions[s..e];
+
+                // Dim control polygon
+                for w in seg_pts.windows(2) {
+                    draw.line()
+                        .start(w[0].position)
+                        .end(w[1].position)
+                        .color(rgba(
+                            seg_color.red * 0.35,
+                            seg_color.green * 0.35,
+                            seg_color.blue * 0.35,
+                            0.6f32,
+                        ));
+                }
+
+                // Segment curve
+                if seg_pos.len() > 1 {
+                    let curve = bezier::sample_curve(seg_pos, 80);
+                    draw.polyline().weight(3.0).points(curve).color(seg_color);
+                }
+            }
+
+            // Junction rings at shared points between segments
+            for &(_, e) in ranges.iter().take(total_segs.saturating_sub(1)) {
+                draw.ellipse()
+                    .xy(positions[e - 1])
+                    .radius(8.0)
+                    .no_fill()
+                    .stroke_weight(1.5)
+                    .stroke(rgba(1.0f32, 1.0, 1.0, 0.6));
+            }
+
+            // Control points on top
+            for point in &model.points {
+                draw.ellipse().xy(point.position).radius(5.0).color(point.color);
+            }
+
+            // Playhead
+            if positions.len() > 1 {
+                let playhead = bezier::evaluate_piecewise(&positions, model.current_t);
+                draw.ellipse().xy(playhead).radius(7.0).color(BLACK);
+                draw.ellipse().xy(playhead).radius(5.0).color(WHITE);
+            }
+
+            // Influence graph for the active segment
+            if !ranges.is_empty() {
+                let (seg_idx, local_t) = bezier::global_to_local_t(&ranges, model.current_t);
+                let (s, e) = ranges[seg_idx];
+                ui::draw_influence_graph(
+                    &draw, win, &model.points[s..e], local_t, seg_idx, total_segs,
+                );
+            }
         }
     }
 
-    // Bezier curve
-    let positions: Vec<Vec2> = model.points.iter().map(|p| p.position).collect();
-    if positions.len() > 1 {
-        let curve = bezier::sample_curve(&positions, 100);
-        draw.polyline().weight(3.0).points(curve).color(STEELBLUE);
-
-        // Playhead: point on the curve at current_t
-        let playhead = bezier::de_casteljau(&positions, model.current_t);
-        draw.ellipse()
-            .xy(playhead)
-            .radius(7.0)
-            .color(BLACK);
-        draw.ellipse()
-            .xy(playhead)
-            .radius(5.0)
-            .color(WHITE);
-    }
-
-    // Control points (drawn on top of curve)
-    for point in &model.points {
-        draw.ellipse()
-            .xy(point.position)
-            .radius(5.0)
-            .color(point.color);
-    }
-
-    ui::draw_influence_graph(&draw, app.window_rect(), &model.points, model.current_t);
-    ui::draw_slider(&draw, app.window_rect(), model.current_t);
-
+    ui::draw_slider(&draw, win, model.current_t);
     draw.to_frame(app, &frame).unwrap();
 }

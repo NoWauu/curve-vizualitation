@@ -45,3 +45,49 @@ pub fn sample_curve(control_points: &[Vec2], resolution: usize) -> Vec<Vec2> {
         })
         .collect()
 }
+
+// ── Piecewise spline ──────────────────────────────────────────────────────────
+
+/// Splits n control points into cubic Bézier segments of at most 4 points.
+/// Adjacent segments share their junction point (C0 continuity).
+/// Returns a list of (start, end_exclusive) index pairs.
+pub fn piecewise_segment_ranges(n: usize) -> Vec<(usize, usize)> {
+    if n < 2 {
+        return vec![];
+    }
+    let mut ranges = vec![];
+    let mut start = 0;
+    while start < n - 1 {
+        let end = (start + 4).min(n);
+        ranges.push((start, end));
+        if end == n {
+            break;
+        }
+        start = end - 1; // share the junction point
+    }
+    ranges
+}
+
+/// Maps a global t ∈ [0, 1] to `(segment_index, local_t ∈ [0, 1])`.
+/// Each segment owns an equal fraction of the global t range.
+pub fn global_to_local_t(ranges: &[(usize, usize)], global_t: f32) -> (usize, f32) {
+    let n = ranges.len();
+    if n == 0 {
+        return (0, global_t);
+    }
+    let scaled = (global_t * n as f32).clamp(0.0, n as f32);
+    let seg = (scaled.floor() as usize).min(n - 1);
+    let local_t = (scaled - seg as f32).clamp(0.0, 1.0);
+    (seg, local_t)
+}
+
+/// Evaluates the piecewise spline at a global t ∈ [0, 1].
+pub fn evaluate_piecewise(points: &[Vec2], global_t: f32) -> Vec2 {
+    let ranges = piecewise_segment_ranges(points.len());
+    if ranges.is_empty() {
+        return points.first().copied().unwrap_or(Vec2::ZERO);
+    }
+    let (seg, local_t) = global_to_local_t(&ranges, global_t);
+    let (s, e) = ranges[seg];
+    de_casteljau(&points[s..e], local_t)
+}

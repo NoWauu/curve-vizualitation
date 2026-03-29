@@ -20,8 +20,16 @@ fn plot_area(win: Rect) -> (Vec2, f32, f32) {
 }
 
 /// Draws the Bernstein influence graph in the bottom-right corner.
-/// Pass `current_t` to show a playhead line and per-curve dot at that value.
-pub fn draw_influence_graph(draw: &Draw, win: Rect, points: &[ControlPoint], t: f32) {
+/// In piecewise mode, pass the active segment's points, its local t, seg_idx, and total_segs.
+/// In full-Bézier mode, pass all points with global t, seg_idx=0, total_segs=1.
+pub fn draw_influence_graph(
+    draw: &Draw,
+    win: Rect,
+    points: &[ControlPoint],
+    t: f32,
+    seg_idx: usize,
+    total_segs: usize,
+) {
     if points.len() < 2 {
         return;
     }
@@ -41,6 +49,14 @@ pub fn draw_influence_graph(draw: &Draw, win: Rect, points: &[ControlPoint], t: 
         .no_fill()
         .stroke_weight(1.0)
         .stroke(rgba(1.0f32, 1.0, 1.0, 0.2));
+
+    // Segment label (piecewise mode only)
+    if total_segs > 1 {
+        draw.text(&format!("Seg {}/{}", seg_idx + 1, total_segs))
+            .x_y(panel_cx, panel_cy + PANEL_H / 2.0 - 9.0)
+            .font_size(10)
+            .color(rgba(1.0f32, 1.0, 1.0, 0.55));
+    }
 
     // Axes
     let axis_color = rgba(1.0f32, 1.0, 1.0, 0.25);
