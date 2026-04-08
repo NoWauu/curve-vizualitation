@@ -52,4 +52,4 @@ There's no roadmap or strict scope here, but a few things that would be interest
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
