@@ -20,6 +20,8 @@ pub fn palette_color(index: usize) -> Rgb<f32> {
 pub enum VisualizationMode {
     FullBezier,
     PiecewiseSpline,
+    HermiteSpline,
+    BSpline,
 }
 
 pub struct ControlPoint {
@@ -30,7 +32,9 @@ pub struct ControlPoint {
 
 pub struct Model {
     pub points: Vec<ControlPoint>,
+    pub tangents: Vec<Vec2>,
     pub selected_id: Option<usize>,
+    pub selected_tangent_id: Option<usize>,
     pub next_id: usize,
     pub current_t: f32,
     pub dragging_slider: bool,
@@ -45,7 +49,13 @@ impl Model {
                 ControlPoint { id: 1, position: vec2(-100.0, -100.0), color: palette_color(1) },
                 ControlPoint { id: 2, position: vec2(50.0, -50.0), color: palette_color(2) },
             ],
+            tangents: vec![
+                vec2(-100.0, -100.0), // toward P1
+                vec2(-25.0, -75.0),   // Catmull-Rom: (P2 - P0) / 2
+                vec2(75.0, 25.0),     // toward P2 from P1
+            ],
             selected_id: None,
+            selected_tangent_id: None,
             next_id: 3,
             current_t: 0.0,
             dragging_slider: false,

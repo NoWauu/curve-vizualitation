@@ -1,6 +1,7 @@
 use nannou::prelude::*;
 
 use crate::bezier::{self, bernstein_basis};
+use crate::hermite;
 use crate::model::ControlPoint;
 
 // ── Influence graph ───────────────────────────────────────────────────────────
@@ -742,4 +743,303 @@ pub fn draw_g2_graph(draw: &Draw, win: Rect, segments: &[Vec<Vec2>], current_t: 
         .weight(1.0)
         .color(rgba(0.8, 0.3, 1.0, 0.5));
     draw.ellipse().xy(pt2(dot_x, dot_y)).radius(3.5).color(rgba(0.8, 0.3, 1.0, 1.0));
+}
+
+/// Computes the parametric (C) and geometric (G) continuity levels across all segment junctions.
+/// Returns (c_level, g_level) where levels are 0, 1, or 2.
+pub fn compute_continuity(segments: &[Vec<Vec2>]) -> (u8, u8) {
+    let n_segs = segments.len();
+    if n_segs <= 1 {
+        return (2, 2);
+    }
+
+    let mut c_level: u8 = 2;
+    let mut g_level: u8 = 2;
+
+    for i in 0..n_segs - 1 {
+        let seg_l = &segments[i];
+        let seg_r = &segments[i + 1];
+        if seg_l.len() < 2 || seg_r.len() < 2 {
+            continue;
+        }
+
+        // C0 / G0: position match
+        let pos_l = bezier::de_casteljau(seg_l, 1.0);
+        let pos_r = bezier::de_casteljau(seg_r, 0.0);
+        if pos_l.distance(pos_r) > 1.0 {
+            c_level = 0;
+            g_level = 0;
+            continue;
+        }
+
+        // Velocity vectors at junction
+        let vel_pts_l = bezier::bezier_derivative_points(seg_l);
+        let vel_pts_r = bezier::bezier_derivative_points(seg_r);
+        let vel_l = bezier::de_casteljau(&vel_pts_l, 1.0);
+        let vel_r = bezier::de_casteljau(&vel_pts_r, 0.0);
+
+        // C1: velocity vectors match exactly
+        let vel_scale = vel_l.length().max(vel_r.length()).max(1.0);
+        if vel_l.distance(vel_r) / vel_scale > 0.02 {
+            c_level = c_level.min(0);
+        }
+
+        // G1: tangent directions match (angle difference)
+        let angle_l = vel_l.y.atan2(vel_l.x);
+        let angle_r = vel_r.y.atan2(vel_r.x);
+        let angle_diff = (angle_l - angle_r).abs();
+        let angle_diff = angle_diff.min(std::f32::consts::TAU - angle_diff);
+        if angle_diff > 0.05 {
+            g_level = g_level.min(0);
+        }
+
+        // C2 / G2: need at least cubic segments
+        if seg_l.len() >= 3 && seg_r.len() >= 3 {
+            let acc_pts_l = bezier::bezier_derivative_points(&vel_pts_l);
+            let acc_pts_r = bezier::bezier_derivative_points(&vel_pts_r);
+            if !acc_pts_l.is_empty() && !acc_pts_r.is_empty() {
+                let acc_l = bezier::de_casteljau(&acc_pts_l, 1.0);
+                let acc_r = bezier::de_casteljau(&acc_pts_r, 0.0);
+
+                // C2: acceleration vectors match
+                let acc_scale = acc_l.length().max(acc_r.length()).max(1.0);
+                if acc_l.distance(acc_r) / acc_scale > 0.02 {
+                    c_level = c_level.min(1);
+                }
+
+                // G2: curvature values match
+                let speed_l_sq = vel_l.length_squared();
+                let speed_r_sq = vel_r.length_squared();
+                let curv_l = if speed_l_sq > 1e-6 {
+                    (vel_l.x * acc_l.y - vel_l.y * acc_l.x) / speed_l_sq.powf(1.5)
+                } else {
+                    0.0
+                };
+                let curv_r = if speed_r_sq > 1e-6 {
+                    (vel_r.x * acc_r.y - vel_r.y * acc_r.x) / speed_r_sq.powf(1.5)
+                } else {
+                    0.0
+                };
+                let curv_scale = curv_l.abs().max(curv_r.abs()).max(0.001);
+                if (curv_l - curv_r).abs() / curv_scale > 0.05 {
+                    g_level = g_level.min(1);
+                }
+            }
+        } else {
+            c_level = c_level.min(1);
+            g_level = g_level.min(1);
+        }
+    }
+
+    (c_level, g_level)
+}
+
+/// Draws the parametric (C) and geometric (G) continuity labels at the top of the screen.
+pub fn draw_continuity_labels(draw: &Draw, win: Rect, segments: &[Vec<Vec2>]) {
+    if segments.is_empty() {
+        return;
+    }
+
+    let (c_level, g_level) = compute_continuity(segments);
+
+    let level_color = |level: u8| -> Rgba<f32> {
+        match level {
+            0 => rgba(1.0, 0.35, 0.35, 0.95),
+            1 => rgba(1.0, 0.85, 0.3, 0.95),
+            _ => rgba(0.3, 1.0, 0.45, 0.95),
+        }
+    };
+
+    let c_text = format!("C{}", c_level);
+    let g_text = format!("G{}", g_level);
+    let margin = 20.0;
+    let top_y = win.top() - margin;
+
+    // Top-left: parametric continuity
+    draw.text(&c_text)
+        .x_y(win.left() + margin + 14.0, top_y)
+        .font_size(18)
+        .color(level_color(c_level));
+
+    // Top-right: geometric continuity
+    draw.text(&g_text)
+        .x_y(win.right() - margin - 14.0, top_y)
+        .font_size(18)
+        .color(level_color(g_level));
+}
+
+/// Draws the B-spline basis function graph in the bottom-right corner.
+pub fn draw_bspline_influence_graph(
+    draw: &Draw,
+    win: Rect,
+    points: &[ControlPoint],
+    current_t: f32,
+) {
+    if points.len() < 4 {
+        return;
+    }
+
+    let (origin, plot_w, plot_h) = plot_area(win);
+    let panel_cx = origin.x - PADDING + PANEL_W / 2.0;
+    let panel_cy = origin.y - PADDING + PANEL_H / 2.0;
+    let n = points.len();
+    let knots = crate::bspline::clamped_knots(n);
+
+    // Background + border
+    draw.rect()
+        .x_y(panel_cx, panel_cy)
+        .w_h(PANEL_W, PANEL_H)
+        .color(rgba(0.05, 0.05, 0.05, 0.85));
+    draw.rect()
+        .x_y(panel_cx, panel_cy)
+        .w_h(PANEL_W, PANEL_H)
+        .no_fill()
+        .stroke_weight(1.0)
+        .stroke(rgba(0.3f32, 0.7, 1.0, 0.3));
+
+    draw.text("B-Spline Basis")
+        .x_y(panel_cx, panel_cy + PANEL_H / 2.0 - 9.0)
+        .font_size(10)
+        .color(rgba(0.3f32, 0.7, 1.0, 0.65));
+
+    // Axes
+    let axis_color = rgba(1.0f32, 1.0, 1.0, 0.25);
+    draw.line()
+        .start(origin)
+        .end(pt2(origin.x + plot_w, origin.y))
+        .color(axis_color);
+    draw.line()
+        .start(origin)
+        .end(pt2(origin.x, origin.y + plot_h))
+        .color(axis_color);
+
+    // Draw each basis function N_{i,3}(t)
+    for i in 0..n {
+        let color = points[i].color;
+        let curve_pts: Vec<Vec2> = (0..=RESOLUTION)
+            .map(|j| {
+                let s = j as f32 / RESOLUTION as f32;
+                let t_val = s.clamp(0.0, 1.0 - 1e-7);
+                let influence = crate::bspline::basis_function(i, 3, &knots, t_val);
+                vec2(origin.x + s * plot_w, origin.y + influence * plot_h)
+            })
+            .collect();
+        draw.polyline().weight(1.5).points(curve_pts).color(color);
+
+        // Dot at current t
+        let t_val = current_t.clamp(0.0, 1.0 - 1e-7);
+        let influence_at_t = crate::bspline::basis_function(i, 3, &knots, t_val);
+        let dot = vec2(
+            origin.x + current_t * plot_w,
+            origin.y + influence_at_t * plot_h,
+        );
+        draw.ellipse().xy(dot).radius(3.5).color(color);
+    }
+
+    // Vertical playhead line
+    let playhead_x = origin.x + current_t * plot_w;
+    draw.line()
+        .start(pt2(playhead_x, origin.y))
+        .end(pt2(playhead_x, origin.y + plot_h))
+        .weight(1.0)
+        .color(rgba(1.0f32, 1.0, 1.0, 0.5));
+}
+
+/// Draws the Hermite basis function influence graph in the bottom-right corner.
+pub fn draw_hermite_influence_graph(
+    draw: &Draw,
+    win: Rect,
+    seg_idx: usize,
+    total_segs: usize,
+    t: f32,
+    p0_color: Rgb<f32>,
+    p1_color: Rgb<f32>,
+) {
+    let (origin, plot_w, plot_h) = plot_area(win);
+    let panel_cx = origin.x - PADDING + PANEL_W / 2.0;
+    let panel_cy = origin.y - PADDING + PANEL_H / 2.0;
+
+    // Background + border
+    draw.rect()
+        .x_y(panel_cx, panel_cy)
+        .w_h(PANEL_W, PANEL_H)
+        .color(rgba(0.05, 0.05, 0.05, 0.85));
+    draw.rect()
+        .x_y(panel_cx, panel_cy)
+        .w_h(PANEL_W, PANEL_H)
+        .no_fill()
+        .stroke_weight(1.0)
+        .stroke(rgba(1.0f32, 0.85, 0.3, 0.3));
+
+    // Title + segment label
+    let label = if total_segs > 1 {
+        format!("Hermite Basis — Seg {}/{}", seg_idx + 1, total_segs)
+    } else {
+        "Hermite Basis".to_string()
+    };
+    draw.text(&label)
+        .x_y(panel_cx, panel_cy + PANEL_H / 2.0 - 9.0)
+        .font_size(10)
+        .color(rgba(1.0f32, 0.85, 0.3, 0.65));
+
+    // Axes
+    let axis_color = rgba(1.0f32, 1.0, 1.0, 0.25);
+    draw.line()
+        .start(origin)
+        .end(pt2(origin.x + plot_w, origin.y))
+        .color(axis_color);
+    draw.line()
+        .start(origin)
+        .end(pt2(origin.x, origin.y + plot_h))
+        .color(axis_color);
+
+    // h00/h01 range [0,1], h10 range [0, 4/27], h11 range [-4/27, 0]
+    let min_val = -0.2f32;
+    let max_val = 1.05f32;
+    let range = max_val - min_val;
+
+    // Zero line
+    let zero_y = origin.y + (-min_val / range) * plot_h;
+    draw.line()
+        .start(pt2(origin.x, zero_y))
+        .end(pt2(origin.x + plot_w, zero_y))
+        .weight(0.5)
+        .color(rgba(1.0f32, 1.0, 1.0, 0.15));
+
+    let basis_fns: [fn(f32) -> f32; 4] = [hermite::h00, hermite::h10, hermite::h01, hermite::h11];
+    let tangent_color = rgba(1.0, 1.0, 0.4, 0.9);
+    let tangent_color_dim = rgba(0.7, 0.7, 0.3, 0.9);
+    let colors = [
+        rgba(p0_color.red, p0_color.green, p0_color.blue, 1.0),
+        tangent_color,
+        rgba(p1_color.red, p1_color.green, p1_color.blue, 1.0),
+        tangent_color_dim,
+    ];
+
+    for (i, basis_fn) in basis_fns.iter().enumerate() {
+        let curve_pts: Vec<Vec2> = (0..=RESOLUTION)
+            .map(|j| {
+                let s = j as f32 / RESOLUTION as f32;
+                let val = basis_fn(s);
+                let y = (val - min_val) / range;
+                vec2(origin.x + s * plot_w, origin.y + y * plot_h)
+            })
+            .collect();
+
+        draw.polyline().weight(1.5).points(curve_pts).color(colors[i]);
+
+        // Dot at current t
+        let val_at_t = basis_fn(t);
+        let dot_y = (val_at_t - min_val) / range;
+        let dot = vec2(origin.x + t * plot_w, origin.y + dot_y * plot_h);
+        draw.ellipse().xy(dot).radius(3.5).color(colors[i]);
+    }
+
+    // Vertical playhead line
+    let playhead_x = origin.x + t * plot_w;
+    draw.line()
+        .start(pt2(playhead_x, origin.y))
+        .end(pt2(playhead_x, origin.y + plot_h))
+        .weight(1.0)
+        .color(rgba(1.0f32, 1.0, 1.0, 0.5));
 }
