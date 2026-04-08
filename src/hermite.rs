@@ -79,3 +79,151 @@ pub fn global_to_local_t(n_points: usize, global_t: f32) -> (usize, f32) {
     let local_t = (scaled - seg as f32).clamp(0.0, 1.0);
     (seg, local_t)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+
+    const EPS: f32 = 1e-5;
+
+    fn approx(a: f32, b: f32) -> bool { (a - b).abs() < EPS }
+    fn approx_v2(a: Vec2, b: Vec2) -> bool { (a - b).length() < EPS }
+
+    // ── basis functions ───────────────────────────────────────────────────────
+
+    #[test]
+    fn basis_endpoint_values() {
+        assert!(approx(h00(0.0), 1.0));
+        assert!(approx(h00(1.0), 0.0));
+        assert!(approx(h10(0.0), 0.0));
+        assert!(approx(h10(1.0), 0.0));
+        assert!(approx(h01(0.0), 0.0));
+        assert!(approx(h01(1.0), 1.0));
+        assert!(approx(h11(0.0), 0.0));
+        assert!(approx(h11(1.0), 0.0));
+    }
+
+    #[test]
+    fn position_basis_sums_to_one() {
+        // h00 + h01 = 1 everywhere (they blend the two endpoint positions)
+        for i in 0..=20 {
+            let t = i as f32 / 20.0;
+            assert!(approx(h00(t) + h01(t), 1.0), "t={t}");
+        }
+    }
+
+    #[test]
+    fn h10_peak_is_positive_h11_trough_is_negative() {
+        // h10 peaks at t=1/3, h11 troughs at t=2/3
+        let peak = h10(1.0 / 3.0);
+        let trough = h11(2.0 / 3.0);
+        assert!(peak > 0.0);
+        assert!(trough < 0.0);
+    }
+
+    // ── evaluate_segment ─────────────────────────────────────────────────────
+
+    #[test]
+    fn segment_interpolates_endpoints() {
+        let p0 = vec2(1.0, 2.0);
+        let m0 = vec2(0.5, -1.0);
+        let p1 = vec2(4.0, -1.0);
+        let m1 = vec2(1.0, 2.0);
+        assert!(approx_v2(evaluate_segment(p0, m0, p1, m1, 0.0), p0));
+        assert!(approx_v2(evaluate_segment(p0, m0, p1, m1, 1.0), p1));
+    }
+
+    #[test]
+    fn segment_zero_tangents_is_smooth_interpolation() {
+        // Zero tangents: curve still interpolates endpoints
+        let p0 = vec2(0.0, 0.0);
+        let p1 = vec2(4.0, 0.0);
+        assert!(approx_v2(evaluate_segment(p0, Vec2::ZERO, p1, Vec2::ZERO, 0.0), p0));
+        assert!(approx_v2(evaluate_segment(p0, Vec2::ZERO, p1, Vec2::ZERO, 1.0), p1));
+        // Midpoint is average when tangents are zero (symmetry)
+        let mid = evaluate_segment(p0, Vec2::ZERO, p1, Vec2::ZERO, 0.5);
+        assert!(approx_v2(mid, vec2(2.0, 0.0)));
+    }
+
+    #[test]
+    fn segment_coincident_points_zero_tangents() {
+        let p = vec2(3.0, 5.0);
+        for i in 0..=10 {
+            let t = i as f32 / 10.0;
+            assert!(approx_v2(evaluate_segment(p, Vec2::ZERO, p, Vec2::ZERO, t), p));
+        }
+    }
+
+    // ── hermite_to_bezier ─────────────────────────────────────────────────────
+
+    #[test]
+    fn bezier_conversion_endpoints_and_handles() {
+        let p0 = vec2(0.0, 0.0);
+        let m0 = vec2(3.0, 0.0);
+        let p1 = vec2(6.0, 0.0);
+        let m1 = vec2(3.0, 0.0);
+        let bez = hermite_to_bezier(p0, m0, p1, m1);
+        assert!(approx_v2(bez[0], p0));
+        assert!(approx_v2(bez[3], p1));
+        assert!(approx_v2(bez[1], p0 + m0 / 3.0));
+        assert!(approx_v2(bez[2], p1 - m1 / 3.0));
+    }
+
+    #[test]
+    fn bezier_conversion_matches_hermite_evaluation() {
+        let p0 = vec2(0.0, 0.0);
+        let m0 = vec2(2.0, 1.0);
+        let p1 = vec2(3.0, 2.0);
+        let m1 = vec2(-1.0, 0.5);
+        let bez = hermite_to_bezier(p0, m0, p1, m1);
+        for i in 0..=10 {
+            let t = i as f32 / 10.0;
+            let h = evaluate_segment(p0, m0, p1, m1, t);
+            let b = crate::bezier::de_casteljau(&bez, t);
+            assert!(approx_v2(h, b), "t={t}: hermite={h:?} bezier={b:?}");
+        }
+    }
+
+    // ── global_to_local_t ─────────────────────────────────────────────────────
+
+    #[test]
+    fn global_to_local_single_segment() {
+        let (seg, lt) = global_to_local_t(2, 0.0);
+        assert_eq!(seg, 0); assert!(approx(lt, 0.0));
+        let (seg, lt) = global_to_local_t(2, 1.0);
+        assert_eq!(seg, 0); assert!(approx(lt, 1.0));
+        let (seg, lt) = global_to_local_t(2, 0.5);
+        assert_eq!(seg, 0); assert!(approx(lt, 0.5));
+    }
+
+    #[test]
+    fn global_to_local_two_segments() {
+        // 3 points → 2 segments, each spans half the global range
+        let (seg, lt) = global_to_local_t(3, 0.25);
+        assert_eq!(seg, 0); assert!(approx(lt, 0.5));
+        let (seg, lt) = global_to_local_t(3, 0.75);
+        assert_eq!(seg, 1); assert!(approx(lt, 0.5));
+        let (seg, lt) = global_to_local_t(3, 1.0);
+        assert_eq!(seg, 1); assert!(approx(lt, 1.0));
+    }
+
+    #[test]
+    fn global_to_local_degenerate_single_point() {
+        // n_points < 2 → falls back to (0, t)
+        let (seg, lt) = global_to_local_t(1, 0.7);
+        assert_eq!(seg, 0); assert!(approx(lt, 0.7));
+    }
+
+    // ── sample_curve / evaluate_piecewise consistency ─────────────────────────
+
+    #[test]
+    fn piecewise_endpoints_match_control_points() {
+        let pts = vec![vec2(0.0,0.0), vec2(2.0,3.0), vec2(5.0,1.0)];
+        let tans = vec![vec2(1.0,1.0), vec2(2.0,0.0), vec2(1.0,-1.0)];
+        let start = evaluate_piecewise(&pts, &tans, 0.0);
+        let end   = evaluate_piecewise(&pts, &tans, 1.0);
+        assert!(approx_v2(start, pts[0]));
+        assert!(approx_v2(end,   *pts.last().unwrap()));
+    }
+}

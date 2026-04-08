@@ -1043,3 +1043,69 @@ pub fn draw_hermite_influence_graph(
         .weight(1.0)
         .color(rgba(1.0f32, 1.0, 1.0, 0.5));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+
+    fn seg(pts: &[(f32, f32)]) -> Vec<Vec2> {
+        pts.iter().map(|&(x, y)| vec2(x, y)).collect()
+    }
+
+    // ── compute_continuity ────────────────────────────────────────────────────
+
+    #[test]
+    fn single_segment_is_c2_g2() {
+        let s = seg(&[(0.0,0.0),(1.0,1.0),(2.0,1.0),(3.0,0.0)]);
+        assert_eq!(compute_continuity(&[s]), (2, 2));
+    }
+
+    #[test]
+    fn empty_is_c2_g2() {
+        assert_eq!(compute_continuity(&[]), (2, 2));
+    }
+
+    #[test]
+    fn collinear_segments_equal_velocity_are_c2() {
+        // Two straight-line cubics with uniform spacing → velocity matches at junction
+        let s1 = seg(&[(0.0,0.0),(1.0,0.0),(2.0,0.0),(3.0,0.0)]);
+        let s2 = seg(&[(3.0,0.0),(4.0,0.0),(5.0,0.0),(6.0,0.0)]);
+        let (c, g) = compute_continuity(&[s1, s2]);
+        assert!(c >= 2, "expected C2, got C{c}");
+        assert!(g >= 2, "expected G2, got G{g}");
+    }
+
+    #[test]
+    fn perpendicular_tangents_at_junction_are_c0_only() {
+        // Segment 1 ends moving right, segment 2 starts moving up → G1 breaks
+        let s1 = seg(&[(0.0,0.0),(0.33,0.0),(0.67,0.0),(1.0,0.0)]);
+        let s2 = seg(&[(1.0,0.0),(1.0,0.33),(1.0,0.67),(1.0,1.0)]);
+        let (c, g) = compute_continuity(&[s1, s2]);
+        assert_eq!(c, 0, "expected C0");
+        assert_eq!(g, 0, "expected G0");
+    }
+
+    #[test]
+    fn matching_direction_different_speed_is_g1_not_c1() {
+        // Same direction, different speed → G1 but not C1
+        // vel at junction: s1 ends with (0.9,0) scaled ×3, s2 starts with (3,0) scaled ×3
+        let s1 = seg(&[(0.0,0.0),(0.1,0.0),(0.2,0.0),(0.3,0.0)]);
+        let s2 = seg(&[(0.3,0.0),(1.3,0.0),(2.3,0.0),(3.3,0.0)]);
+        let (c, g) = compute_continuity(&[s1, s2]);
+        assert_eq!(c, 0, "expected C0 (speeds differ)");
+        assert!(g >= 1, "expected at least G1 (directions match)");
+    }
+
+    #[test]
+    fn c1_but_not_c2_curvature_jump() {
+        // seg1: [(-3,0),(-2,0),(-1,0),(0,0)] → vel at t=1: (3,0), accel: (0,0)
+        // seg2: [(0,0),(1,0),(1,1),(2,1)]     → vel at t=0: (3,0), accel: 6*(-1,1)
+        // → velocity matches (C1), acceleration doesn't (not C2)
+        let s1 = seg(&[(-3.0,0.0),(-2.0,0.0),(-1.0,0.0),(0.0,0.0)]);
+        let s2 = seg(&[(0.0,0.0),(1.0,0.0),(1.0,1.0),(2.0,1.0)]);
+        let (c, g) = compute_continuity(&[s1, s2]);
+        assert_eq!(c, 1, "expected C1");
+        assert_eq!(g, 1, "expected G1");
+    }
+}
