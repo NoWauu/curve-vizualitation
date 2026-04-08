@@ -855,17 +855,17 @@ pub fn draw_continuity_labels(draw: &Draw, win: Rect, segments: &[Vec<Vec2>]) {
     let margin = 20.0;
     let top_y = win.top() - margin;
 
-    // Top-left: parametric continuity
-    draw.text(&c_text)
+    // Top-left: geometric continuity (aligns with G1/G2 graphs on the left)
+    draw.text(&g_text)
         .x_y(win.left() + margin + 14.0, top_y)
         .font_size(18)
-        .color(level_color(c_level));
+        .color(level_color(g_level));
 
-    // Top-right: geometric continuity
-    draw.text(&g_text)
+    // Top-right: parametric continuity (aligns with velocity/acceleration graphs on the right)
+    draw.text(&c_text)
         .x_y(win.right() - margin - 14.0, top_y)
         .font_size(18)
-        .color(level_color(g_level));
+        .color(level_color(c_level));
 }
 
 /// Draws the B-spline basis function graph in the bottom-right corner.
