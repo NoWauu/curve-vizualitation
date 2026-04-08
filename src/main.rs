@@ -344,6 +344,13 @@ fn view(app: &App, model: &Model, frame: Frame) {
     ui::draw_g1_graph(&draw, win, &graph_segments, model.current_t);
     ui::draw_g2_graph(&draw, win, &graph_segments, model.current_t);
     ui::draw_continuity_labels(&draw, win, &graph_segments);
+    let title = match model.mode {
+        VisualizationMode::FullBezier => "Full Bézier",
+        VisualizationMode::PiecewiseSpline => "Piecewise Spline",
+        VisualizationMode::HermiteSpline => "Hermite Spline",
+        VisualizationMode::BSpline => "B-Spline",
+    };
+    ui::draw_mode_title(&draw, win, title);
     ui::draw_slider(&draw, win, model.current_t);
     draw.to_frame(app, &frame).unwrap();
 }

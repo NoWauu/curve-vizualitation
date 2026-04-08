@@ -834,6 +834,14 @@ pub fn compute_continuity(segments: &[Vec<Vec2>]) -> (u8, u8) {
     (c_level, g_level)
 }
 
+/// Draws the current visualization mode name centered at the top of the screen.
+pub fn draw_mode_title(draw: &Draw, win: Rect, title: &str) {
+    draw.text(title)
+        .x_y(0.0, win.top() - 20.0)
+        .font_size(16)
+        .color(rgba(1.0f32, 1.0, 1.0, 0.75));
+}
+
 /// Draws the parametric (C) and geometric (G) continuity labels at the top of the screen.
 pub fn draw_continuity_labels(draw: &Draw, win: Rect, segments: &[Vec<Vec2>]) {
     if segments.is_empty() {
